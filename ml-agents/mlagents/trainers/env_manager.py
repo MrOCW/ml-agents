@@ -15,6 +15,12 @@ from mlagents.trainers.action_info import ActionInfo
 from mlagents.trainers.settings import TrainerSettings
 from mlagents_envs.logging_util import get_logger
 
+from PIL import Image
+import numpy as np
+import mmseg
+from mmseg.apis import inference_segmentor, init_segmentor, show_result_pyplot
+from mmseg.core.evaluation import get_palette
+
 AllStepResult = Dict[BehaviorName, Tuple[DecisionSteps, TerminalSteps]]
 AllGroupSpec = Dict[BehaviorName, BehaviorSpec]
 
@@ -41,6 +47,10 @@ class EnvManager(ABC):
         self.policies: Dict[BehaviorName, Policy] = {}
         self.agent_managers: Dict[BehaviorName, AgentManager] = {}
         self.first_step_infos: List[EnvironmentStep] = []
+        self.model = init_segmentor(config='?????????.py',
+                                    checkpoint='?????????/300_9866_8801_9401.pth',
+                                    device='cuda:0')
+        print("Semantic Segmentation model loaded")
 
     def set_policy(self, brain_name: BehaviorName, policy: Policy) -> None:
         self.policies[brain_name] = policy
@@ -142,6 +152,33 @@ class EnvManager(ABC):
                 decision_steps, terminal_steps = step_info.current_all_step_result[
                     name_behavior_id
                 ]
+
+                B = decision_steps.obs[0].shape[0]
+                palette = np.array(([0,0,0],[128,64,128],[250,0,0],[153,153,153],[0,156,0],[0,0,142]))
+                for i in range(B):
+                    input_array = decision_steps.obs[0][i]
+                    input_array = input_array*255
+                    
+                    #img_array = input_array.astype(np.uint8)
+                    #img = Image.fromarray(img_array).convert('RGB')
+                    #img.save("test_raw.png")
+
+                    # Pass the array into the segmentation model
+                    result = inference_segmentor(self.model, input_array)
+                    seg = result[0]
+                    
+                    color_seg = np.zeros((seg.shape[0], seg.shape[1], 3), dtype=np.uint8)
+
+                    for label, color in enumerate(palette):
+                        color_seg[seg == label, :] = color
+                        
+                    #color_seg = color_seg[..., ::-1]  #converts to BGR
+                    #img = (input_array*255) * (1 - 1) + color_seg * 1
+                    #img = Image.fromarray(img.astype(np.uint8)).convert('RGB')
+                    #img.save("test_seg.png")
+
+                    decision_steps.obs[0][i] = (color_seg/255.).astype('float32')
+
                 self.agent_managers[name_behavior_id].add_experiences(
                     decision_steps,
                     terminal_steps,
